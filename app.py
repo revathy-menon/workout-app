@@ -6,7 +6,7 @@ import numpy as np
 from streamlit_gsheets import GSheetsConnection
 
 # --- Configuration ---
-st.set_page_config(page_title="Workout Companion", page_icon="💪", layout="mobile")
+st.set_page_config(page_title="Workout Companion", page_icon="💪", layout="centered")
 
 # --- Database Connection ---
 # We use st.connection to link to your Google Sheet
