@@ -53,9 +53,9 @@ with st.sidebar.expander("ℹ️ Warm-up & Guidelines", expanded=False):
     - **Cardio:** 5 min (Elliptical)
     - **First Exercise:** Warm-up sets!
     ### 🧘‍♂️ Upper Body
-    - Arm circles, Cat-cow
+    - Arm circles, Cat-cow, No-money drill, Torso twist
     ### 🦵 Lower Body
-    - Leg swings, Deep squat
+    - Leg swings, Deep squat, World's greatest stretch
     """)
 
 # ==========================================
