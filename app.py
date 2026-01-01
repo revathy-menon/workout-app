@@ -6,10 +6,10 @@ import numpy as np
 from streamlit_gsheets import GSheetsConnection
 
 # --- Configuration ---
+# Layout="centered" looks best on mobile
 st.set_page_config(page_title="Workout Companion", page_icon="💪", layout="centered")
 
 # --- Database Connection ---
-# We use st.connection to link to your Google Sheet
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
@@ -17,14 +17,18 @@ def load_data():
     df = conn.read(ttl=0)
     
     # --- Data Cleaning ---
-    # Ensure date parsing works
+    # 1. Fix Date
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     
-    # Ensure numeric columns are actually numbers
-    cols_to_numeric = ['Actual Weight (kg)', 'Actual Reps', 'Sets', 'Target Reps']
+    # 2. Fix Target Reps (Force to string to keep "10-12", "30 sec", etc.)
+    df['Target Reps'] = df['Target Reps'].astype(str).replace('nan', '')
+    
+    # 3. Numeric Columns (Force actuals to numbers)
+    cols_to_numeric = ['Actual Weight (kg)', 'Actual Reps', 'Sets', 'Difficulty (1-10)']
     for col in cols_to_numeric:
-        # Force conversion, non-numbers become NaN
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+        # Check if column exists first to be safe
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
         
     return df
 
@@ -48,7 +52,6 @@ if page == "🏋️ Tracker":
     selected_date = st.date_input("Select Date", datetime.now())
     
     # Filter data for the day
-    # We use a mask so we can map back to the original DataFrame index easily
     mask = df['Date'].dt.date == selected_date
     day_data = df[mask]
 
@@ -59,37 +62,49 @@ if page == "🏋️ Tracker":
         st.caption(f"Focus: {muscles}")
         
         with st.form("log_workout"):
-            # Dictionary to capture updates: {index: {'weight': val, 'reps': val}}
+            # Dictionary to capture updates
             updates = {}
             
             for index, row in day_data.iterrows():
                 st.markdown(f"**{row['Exercise']}**")
-                c1, c2, c3 = st.columns([1.5, 1, 1])
-                c1.caption(f"Goal: {row['Sets']} x {row['Target Reps']}")
                 
-                # Get current values (handle NaN)
+                # Create 4 columns: Goal | Kg | Reps | RPE
+                c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1])
+                
+                # Column 1: The Goal (Text)
+                c1.caption(f"Goal:\n{row['Sets']} x {row['Target Reps']}")
+                
+                # Get current values (handle NaN defaults)
                 val_w = row['Actual Weight (kg)'] if pd.notna(row['Actual Weight (kg)']) else 0.0
                 val_r = row['Actual Reps'] if pd.notna(row['Actual Reps']) else 0.0
+                val_d = row['Difficulty (1-10)'] if pd.notna(row['Difficulty (1-10)']) else 0.0
                 
-                # Inputs
+                # Column 2: Weight
                 new_w = c2.number_input("Kg", value=float(val_w), key=f"w_{index}")
+                
+                # Column 3: Reps
                 new_r = c3.number_input("Reps", value=float(val_r), key=f"r_{index}")
                 
-                # Store the potential new values
-                updates[index] = {'w': new_w, 'r': new_r}
+                # Column 4: RPE / Difficulty
+                new_d = c4.number_input("RPE", min_value=0.0, max_value=10.0, value=float(val_d), key=f"d_{index}")
+                c4.caption("1=Easy, 10=Fail") # The tiny text you asked for
+                
+                # Store updates
+                updates[index] = {'w': new_w, 'r': new_r, 'd': new_d}
                 st.divider()
             
-            # Save Button Logic
+            # Save Button
             if st.form_submit_button("✅ Save to Google Sheet"):
-                # Apply updates to the main dataframe
+                # Apply updates
                 for idx, data in updates.items():
                     df.at[idx, 'Actual Weight (kg)'] = data['w']
                     df.at[idx, 'Actual Reps'] = data['r']
+                    df.at[idx, 'Difficulty (1-10)'] = data['d']
                 
                 # Write back to Google Sheet
                 conn.update(data=df)
                 st.success("Success! Google Sheet updated.")
-                st.cache_data.clear() # Clear cache to force reload next time
+                st.cache_data.clear()
 
 # ==========================================
 # PAGE 2: ANALYTICS
@@ -97,6 +112,7 @@ if page == "🏋️ Tracker":
 elif page == "📈 Analytics":
     st.title("Progress Dashboard")
     
+    # Filter for logged data
     history = df.dropna(subset=['Actual Weight (kg)'])
     
     if history.empty:
@@ -112,9 +128,13 @@ elif page == "📈 Analytics":
         selected_ex = st.selectbox("Choose Exercise", ex_list)
         
         chart_data = history[history['Exercise'] == selected_ex]
+        
         if not chart_data.empty:
+            # Dual chart? Let's keep it simple first
             c = alt.Chart(chart_data).mark_line(point=True).encode(
-                x='Date', y='Actual Weight (kg)', tooltip=['Date', 'Actual Weight (kg)', 'Actual Reps']
+                x='Date', 
+                y='Actual Weight (kg)', 
+                tooltip=['Date', 'Actual Weight (kg)', 'Actual Reps', 'Difficulty (1-10)']
             )
             st.altair_chart(c, use_container_width=True)
 
@@ -123,7 +143,7 @@ elif page == "📈 Analytics":
 # ==========================================
 elif page == "⚙️ Plan Generator":
     st.title("Plan Creator")
-    st.info("Use this to generate CSV data for next month, then paste it into your Google Sheet manually.")
+    st.info("Use this to generate CSV data for next month.")
     
     with st.form("generator_form"):
         min_date = df['Date'].min()
@@ -142,10 +162,15 @@ elif page == "⚙️ Plan Generator":
                     week_offset = w * 7
                     week_df = template_df.copy()
                     base_shift = pd.Timestamp(start_new_date) - source_start
+                    
                     week_df['Date'] = week_df['Date'] + base_shift + timedelta(days=week_offset)
                     week_df['Day'] = week_df['Date'].dt.day_name().str[:3]
+                    
+                    # Reset logs
                     week_df['Actual Weight (kg)'] = np.nan
                     week_df['Actual Reps'] = np.nan
+                    week_df['Difficulty (1-10)'] = np.nan
+                    
                     new_rows.append(week_df)
                 
                 generated_df = pd.concat(new_rows)
